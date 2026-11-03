@@ -1,0 +1,74 @@
+name: Manual InfinityFree deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Validate and preview the deployment without uploading
+        type: boolean
+        required: true
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: infinityfree-production
+    steps:
+      - name: Check out approved branch
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: dom, fileinfo, mbstring, openssl, pdo_mysql, zip
+          coverage: none
+
+      - name: Validate dependencies and PHP syntax
+        run: |
+          composer validate --no-check-publish
+          composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
+          find app routes -type f -name '*.php' -print0 | xargs -0 -n1 php -l
+          php -l index.php
+
+      - name: Assemble public application package
+        run: |
+          mkdir -p deploy-package
+          cp -R app assets routes vendor index.php .htaccess deploy-package/
+
+      - name: Verify deployment configuration
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_REMOTE_DIR: ${{ secrets.FTP_REMOTE_DIR }}
+          FTP_PROTOCOL: ${{ vars.FTP_PROTOCOL }}
+        run: |
+          test -n "$FTP_SERVER" || { echo "Missing FTP_SERVER secret"; exit 1; }
+          test -n "$FTP_USERNAME" || { echo "Missing FTP_USERNAME secret"; exit 1; }
+          test -n "$FTP_PASSWORD" || { echo "Missing FTP_PASSWORD secret"; exit 1; }
+          test -n "$FTP_REMOTE_DIR" || { echo "Missing FTP_REMOTE_DIR secret"; exit 1; }
+          case "$FTP_PROTOCOL" in ftp|ftps) ;; *) echo "Set repository variable FTP_PROTOCOL to ftp or ftps"; exit 1 ;; esac
+
+      - name: Upload to InfinityFree
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ${{ vars.FTP_PROTOCOL }}
+          port: ${{ vars.FTP_PORT || 21 }}
+          server-dir: ${{ secrets.FTP_REMOTE_DIR }}
+          local-dir: ./deploy-package/
+          dangerous-clean-slate: false
+          dry-run: ${{ inputs.dry_run }}
+          exclude: |
+            **/.git*
+            **/.env*
+            **/private/**
+            **/storage/**
+            **/uploads/**
