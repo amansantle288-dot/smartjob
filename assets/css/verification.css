@@ -1,0 +1,15 @@
+.verification-card{max-width:460px}
+.verification-logo{display:flex;align-items:center;gap:10px;margin-bottom:22px;color:var(--ink);font-size:15px}
+.verification-logo .brand-mark{display:grid;place-items:center}
+.verification-logo .brand-accent{color:var(--accent)}
+.otp-input{font-size:24px;letter-spacing:.5em;text-align:center;font-variant-numeric:tabular-nums}
+.verification-resend{margin-top:12px}
+.verification-success{margin:70px auto}
+.verification-config-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin-bottom:20px}
+.verification-config-grid .card h2,.verification-log h2,.verification-policy h2{margin-bottom:14px}
+.verification-config-grid form{margin-top:18px}
+.verification-toggle{display:flex;align-items:center;gap:10px}
+.verification-toggle input{width:auto}
+.verification-policy,.verification-log{margin-bottom:20px}
+.verification-log .table-wrap{margin-top:15px}
+@media(max-width:620px){.verification-config-grid{grid-template-columns:1fr}.otp-input{letter-spacing:.35em}}
