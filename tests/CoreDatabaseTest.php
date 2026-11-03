@@ -1,7 +1,15 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/../app/Core/Database.php';
+require_once __DIR__ . '/../app/bootstrap.php';
+
+if (getenv('APP_ENV') !== 'local') {
+    throw new RuntimeException('CoreDatabaseTest must use the local XAMPP environment.');
+}
+$databaseConfiguration = \SMARTJOB\Core\Database::diagnosticConfiguration();
+if ($databaseConfiguration !== ['host' => '127.0.0.1', 'port' => '3306']) {
+    throw new RuntimeException('The local XAMPP database host or port is not configured as expected.');
+}
 
 $firstConnection = \SMARTJOB\Core\Database::connection();
 $secondConnection = \SMARTJOB\Core\Database::connection();

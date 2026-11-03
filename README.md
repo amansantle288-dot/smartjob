@@ -1,6 +1,8 @@
 # SMARTJOB
 
-SMARTJOB is a PHP 8.2+/MySQL OJT placement and internship management application designed for XAMPP.
+SMARTJOB is a PHP 8.2+/MySQL OJT placement and internship management application for local XAMPP development, with a manual InfinityFree deployment procedure.
+
+See [INFINITYFREE_DEPLOYMENT.md](./INFINITYFREE_DEPLOYMENT.md) for environment setup, private storage, backups, FileZilla deployment, preflight checks, and the dry-run-first GitHub workflow with auto-deploy gated off by default. InfinityFree account-specific capabilities and production deployment have not been verified from this workspace.
 
 ## Architecture
 
@@ -26,7 +28,7 @@ Authentication and RBAC underpin all roles. Company review gates internship publ
 5. **SMARTMATCH — foundation only:** normalized skill tables, a standalone explainable skill-overlap scorer, and profile-informed company suggestions exist; persistence, configurable weighted matching, and eligibility remain.
 6. **Applications and placements — partial:** application submission and employer review/status transitions work; notifications, coordinator decisions, placement creation, and progress tracking remain.
 7. **Notifications and reports — schema only:** supporting tables exist; user-facing features and exports remain.
-8. **Testing and deployment — partial:** PHP syntax, matching unit tests, selected MariaDB integration tests, and a local page preview are checked; comprehensive security testing and deployment preparation remain.
+8. **Testing and deployment — partial:** PHP syntax and MariaDB integration tests are available; InfinityFree deployment is documented and dry-run/manual by default, with automatic pushes gated until production verification.
 
 ## Implemented in this increment
 

@@ -1,6 +1,9 @@
-name: Manual InfinityFree deployment
+name: InfinityFree deployment
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       dry_run:
@@ -14,7 +17,7 @@ permissions:
 
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.ENABLE_AUTO_DEPLOY == 'true')
     runs-on: ubuntu-latest
     environment: infinityfree-production
     steps:
@@ -32,13 +35,14 @@ jobs:
         run: |
           composer validate --no-check-publish
           composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
-          find app routes -type f -name '*.php' -print0 | xargs -0 -n1 php -l
+          find app routes config -type f -name '*.php' -print0 | xargs -0 -n1 php -l
           php -l index.php
+          php tests/DeploymentConfigurationTest.php
 
       - name: Assemble public application package
         run: |
           mkdir -p deploy-package
-          cp -R app assets routes vendor index.php .htaccess deploy-package/
+          cp -R app assets routes config vendor index.php .htaccess deploy-package/
 
       - name: Verify deployment configuration
         env:
@@ -52,6 +56,10 @@ jobs:
           test -n "$FTP_USERNAME" || { echo "Missing FTP_USERNAME secret"; exit 1; }
           test -n "$FTP_PASSWORD" || { echo "Missing FTP_PASSWORD secret"; exit 1; }
           test -n "$FTP_REMOTE_DIR" || { echo "Missing FTP_REMOTE_DIR secret"; exit 1; }
+          case "$FTP_REMOTE_DIR" in
+            */htdocs/|htdocs/) ;;
+            *) echo "FTP_REMOTE_DIR must be the verified InfinityFree /htdocs/ directory and end with /"; exit 1 ;;
+          esac
           case "$FTP_PROTOCOL" in ftp|ftps) ;; *) echo "Set repository variable FTP_PROTOCOL to ftp or ftps"; exit 1 ;; esac
 
       - name: Upload to InfinityFree
@@ -65,10 +73,16 @@ jobs:
           server-dir: ${{ secrets.FTP_REMOTE_DIR }}
           local-dir: ./deploy-package/
           dangerous-clean-slate: false
-          dry-run: ${{ inputs.dry_run }}
+          dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
           exclude: |
             **/.git*
-            **/.env*
+            **/.env
+            **/.env.*
+            **/database/**
+            **/tests/**
+            **/scripts/**
             **/private/**
             **/storage/**
             **/uploads/**
+            **/backups/**
+            **/logs/**

@@ -2,12 +2,15 @@ Options -Indexes
 DirectoryIndex index.php
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    RewriteRule ^(app|database|tests|vendor)(/|$) - [F,NC,L]
+    RewriteRule (^|/)\.(?!well-known(?:/|$)) - [F,NC,L]
+    RewriteRule ^(app|config|database|tests|vendor|routes|scripts|private|storage|backups|logs)(/|$) - [F,NC,L]
+    RewriteRule (^|/)(uploads|storage)/.*\.(php[0-9]?|phtml|phar)$ - [F,NC,L]
 </IfModule>
-<FilesMatch "^(README\.md|composer\.(json|lock)|\.env)$">
+<FilesMatch "^(README\.md|composer\.(json|lock)|\.env(?:\..*)?|.*\.(sql|log|ini|bak|backup))$">
     Require all denied
 </FilesMatch>
 <IfModule mod_headers.c>
     Header always set X-Content-Type-Options "nosniff"
     Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always set X-Frame-Options "DENY"
 </IfModule>

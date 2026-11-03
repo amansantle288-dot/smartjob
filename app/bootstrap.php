@@ -1,16 +1,122 @@
 <?php
 declare(strict_types=1);
 
-function load_local_environment(): void
+function smartjob_is_absolute_path(string $path): bool
 {
-    $environmentFile = dirname(__DIR__) . '/.env';
+    return preg_match('/\A(?:[A-Za-z]:[\\\\\/]|\/)/', $path) === 1;
+}
+
+function smartjob_path_is_within(string $path, string $parent): bool
+{
+    $normalize = static function (string $candidate): string {
+        $candidate = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $candidate);
+        $resolved = realpath($candidate);
+        if ($resolved !== false) {
+            return rtrim($resolved, DIRECTORY_SEPARATOR);
+        }
+
+        $suffix = [];
+        while (!file_exists($candidate) && dirname($candidate) !== $candidate) {
+            array_unshift($suffix, basename($candidate));
+            $candidate = dirname($candidate);
+        }
+        $resolvedParent = realpath($candidate);
+        $normalized = ($resolvedParent !== false ? $resolvedParent : $candidate)
+            . ($suffix ? DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, $suffix) : '');
+        return rtrim($normalized, DIRECTORY_SEPARATOR);
+    };
+    $normalizedPath = $normalize($path);
+    $normalizedParent = $normalize($parent);
+    if (DIRECTORY_SEPARATOR === '\\') {
+        $normalizedPath = strtolower($normalizedPath);
+        $normalizedParent = strtolower($normalizedParent);
+    }
+    return $normalizedPath === $normalizedParent
+        || str_starts_with($normalizedPath, $normalizedParent . DIRECTORY_SEPARATOR);
+}
+
+function smartjob_is_local_host(string $httpHost): bool
+{
+    if ($httpHost === '') {
+        return true;
+    }
+
+    $host = parse_url('http://' . $httpHost, PHP_URL_HOST);
+    return is_string($host) && in_array(strtolower($host), ['localhost', '127.0.0.1', '::1'], true);
+}
+
+function smartjob_private_production_file(string $projectRoot, string $documentRoot): ?string
+{
+    $candidate = dirname($projectRoot) . DIRECTORY_SEPARATOR . '.env.production';
+    if (!is_file($candidate)) {
+        return null;
+    }
+
+    if ($documentRoot !== '' && smartjob_path_is_within($candidate, $documentRoot)) {
+        return null;
+    }
+
+    return $candidate;
+}
+
+function select_environment_file(
+    ?string $projectRoot = null,
+    ?string $environment = null,
+    ?string $httpHost = null,
+    ?string $configuredFile = null,
+    ?string $documentRoot = null
+): ?string {
+    $projectRoot ??= dirname(__DIR__);
+    $environment ??= getenv('APP_ENV') ?: null;
+    $httpHost ??= (string) ($_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? '');
+    $configuredFile ??= getenv('SMARTJOB_ENV_FILE') ?: null;
+    $documentRoot ??= (string) ($_SERVER['DOCUMENT_ROOT'] ?? '');
+
+    if ($configuredFile !== null) {
+        if (!smartjob_is_absolute_path($configuredFile)) {
+            throw new RuntimeException('SMARTJOB_ENV_FILE must be an absolute path.');
+        }
+        return $configuredFile;
+    }
+
+    $productionRequested = $environment === 'production' || !smartjob_is_local_host($httpHost);
+    if ($productionRequested) {
+        return smartjob_private_production_file($projectRoot, $documentRoot)
+            ?? (is_file($projectRoot . DIRECTORY_SEPARATOR . '.env.production')
+                ? $projectRoot . DIRECTORY_SEPARATOR . '.env.production'
+                : null);
+    }
+
+    foreach (['.env.local', '.env'] as $fileName) {
+        $candidate = $projectRoot . DIRECTORY_SEPARATOR . $fileName;
+        if (is_file($candidate)) {
+            return $candidate;
+        }
+    }
+
+    return smartjob_private_production_file($projectRoot, $documentRoot)
+        ?? (is_file($projectRoot . DIRECTORY_SEPARATOR . '.env.production')
+            ? $projectRoot . DIRECTORY_SEPARATOR . '.env.production'
+            : null);
+}
+
+function load_local_environment(?string $environmentFile = null): ?string
+{
+    $explicitFile = $environmentFile !== null || (getenv('SMARTJOB_ENV_FILE') !== false && getenv('SMARTJOB_ENV_FILE') !== '');
+    $environmentFile ??= select_environment_file();
+    if ($environmentFile === null) {
+        return null;
+    }
     if (!is_file($environmentFile)) {
-        return;
+        if ($explicitFile || getenv('APP_ENV') === 'production' || !smartjob_is_local_host((string) ($_SERVER['HTTP_HOST'] ?? ''))) {
+            throw new RuntimeException('The application environment configuration is unavailable.');
+        }
+        return null;
     }
 
     $contents = file_get_contents($environmentFile);
     if (!is_string($contents)) {
-        throw new RuntimeException('The local environment configuration could not be read.');
+        throw new RuntimeException('The application environment configuration could not be read.');
     }
 
     foreach (preg_split('/\r\n|\n|\r/', $contents) as $line) {
@@ -30,10 +136,97 @@ function load_local_environment(): void
         }
         putenv($name . '=' . $value);
     }
+
+    return $environmentFile;
 }
 
-load_local_environment();
+function smartjob_environment_config_source(): string
+{
+    $environmentFile = $GLOBALS['smartjob_environment_file'] ?? null;
+    return is_string($environmentFile) && $environmentFile !== ''
+        ? basename($environmentFile)
+        : 'process environment';
+}
+
+$httpHost = (string) ($_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? '');
+$externalEnvironment = getenv('APP_ENV');
+$productionHost = (PHP_SAPI !== 'cli' && $httpHost === '') || !smartjob_is_local_host($httpHost);
+if ($productionHost || $externalEnvironment === 'production') {
+    ini_set('display_errors', '0');
+    ini_set('log_errors', '1');
+}
+if ($productionHost && $externalEnvironment === 'local') {
+    throw new RuntimeException('The configured application environment does not match the production host.');
+}
+if ($productionHost && ($externalEnvironment === false || $externalEnvironment === '')) {
+    putenv('APP_ENV=production');
+}
+$GLOBALS['smartjob_environment_file'] = load_local_environment();
+if (getenv('APP_ENV') === false || getenv('APP_ENV') === '') {
+    putenv('APP_ENV=local');
+}
 date_default_timezone_set('Asia/Manila');
+if (!in_array(getenv('APP_ENV') ?: 'local', ['local', 'production'], true)) {
+    throw new RuntimeException('The application environment configuration is invalid.');
+}
+if (getenv('APP_ENV') === 'production') {
+    ini_set('display_errors', '0');
+    ini_set('log_errors', '1');
+    $appUrl = (string) getenv('APP_URL');
+    $databaseHost = (string) getenv('SMARTJOB_DB_HOST');
+    $databaseName = (string) getenv('SMARTJOB_DB_NAME');
+    $databaseUser = (string) getenv('SMARTJOB_DB_USER');
+    $databasePassword = getenv('SMARTJOB_DB_PASSWORD');
+    $databasePort = (string) getenv('SMARTJOB_DB_PORT');
+    $applicationKey = (string) getenv('SMARTJOB_APP_KEY');
+    $privateStorage = (string) getenv('SMARTJOB_PRIVATE_STORAGE');
+    $debugValue = getenv('APP_DEBUG');
+    $debug = $debugValue === false
+        ? null
+        : filter_var($debugValue, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+    $urlParts = parse_url($appUrl);
+    if (!is_array($urlParts) || strtolower((string) ($urlParts['scheme'] ?? '')) !== 'https'
+        || !filter_var($appUrl, FILTER_VALIDATE_URL)
+        || $debugValue === false
+        || $debug !== false
+        || $databaseHost === '' || $databaseName === '' || $databaseUser === ''
+        || $databasePassword === false || $databasePassword === ''
+        || str_contains(strtolower($databasePassword), 'set_privately')
+        || !ctype_digit($databasePort) || (int) $databasePort < 1 || (int) $databasePort > 65535
+        || !preg_match('/\A[A-Za-z0-9_-]+\z/', $databaseName)
+        || strlen($applicationKey) < 32
+        || str_contains(strtolower($applicationKey), 'replace-with')
+        || str_contains(strtolower($applicationKey), 'your_')
+        || str_contains(strtolower($applicationKey), 'generate-a-unique')
+        || str_contains(strtolower($applicationKey), 'set_privately')
+        || !smartjob_is_absolute_path($privateStorage)
+        || str_contains(strtolower($privateStorage), 'set_to_verified')) {
+        throw new RuntimeException('Required production configuration is missing or invalid.');
+    }
+    $documentRoot = (string) ($_SERVER['DOCUMENT_ROOT'] ?? '');
+    if ($documentRoot !== '' && (smartjob_path_is_within($privateStorage, $documentRoot)
+        || smartjob_path_is_within($documentRoot, $privateStorage))) {
+        throw new RuntimeException('Production private storage must be outside the public web directory.');
+    }
+
+    $environmentFile = $GLOBALS['smartjob_environment_file'] ?? null;
+    if (PHP_SAPI !== 'cli' && is_string($environmentFile)
+        && ($documentRoot === '' || smartjob_path_is_within($environmentFile, $documentRoot))) {
+        if (preg_match('/\A\.env(?:\..*)?\z/', basename($environmentFile)) !== 1) {
+            throw new RuntimeException('Production configuration files in the web root must use a protected .env filename.');
+        }
+        $accessVerification = getenv('SMARTJOB_PUBLIC_ENV_FILE_ACCESS_VERIFIED');
+        $accessFile = dirname(__DIR__) . DIRECTORY_SEPARATOR . '.htaccess';
+        $accessRules = is_file($accessFile) ? file_get_contents($accessFile) : false;
+        if (!in_array($accessVerification, ['true', '1'], true)
+            || !is_string($accessRules)
+            || !preg_match('/RewriteRule\s+\(\^\|\/\)\\\./i', $accessRules)
+            || !preg_match('/<FilesMatch\b[^>]*\\\.env/i', $accessRules)
+            || !preg_match('/Require\s+all\s+denied/i', $accessRules)) {
+            throw new RuntimeException('Production environment files in the web root require verified access-denial protections.');
+        }
+    }
+}
 
 require_once __DIR__ . '/Core/Database.php';
 require_once __DIR__ . '/Core/Router.php';
@@ -103,7 +296,27 @@ function app_secret(): string
     return hash('sha256', 'SMARTJOB-local-development|' . (string) ($_SERVER['HTTP_HOST'] ?? 'localhost'));
 }
 
-$https = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+$https = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
+    || strtolower((string) ($_SERVER['REQUEST_SCHEME'] ?? '')) === 'https'
+    || strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https';
+if (getenv('APP_ENV') === 'production' && PHP_SAPI !== 'cli' && !$https) {
+    throw new RuntimeException('HTTPS is required in production.');
+}
+if (getenv('APP_ENV') === 'production') {
+    $documentRoot = (string) ($_SERVER['DOCUMENT_ROOT'] ?? '');
+    $storedFile = CredentialStorage::path(str_repeat('a', 64));
+    $storageDirectory = dirname($storedFile);
+    $configuredStorage = getenv('SMARTJOB_PRIVATE_STORAGE');
+    if (($configuredStorage !== false && $configuredStorage !== ''
+            && !smartjob_is_absolute_path($configuredStorage))
+        || ($documentRoot !== '' && smartjob_path_is_within($storageDirectory, $documentRoot))) {
+        throw new RuntimeException('Production private storage must be outside the public web directory.');
+    }
+}
+if (getenv('APP_ENV') !== 'production' && (getenv('APP_DEBUG') === 'true' || getenv('APP_DEBUG') === '1')) {
+    ini_set('display_errors', '1');
+    ini_set('log_errors', '1');
+}
 ini_set('session.use_strict_mode', '1');
 ini_set('session.use_only_cookies', '1');
 session_name('smartjob_session');
